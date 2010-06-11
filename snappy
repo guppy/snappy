@@ -19,7 +19,6 @@ rsync_args = ["-q", "-a", "-H", "-x", "--delete-during", "--numeric-ids"]
 rsync_allowed_exitcodes = (0, 24, 25)
 
 def find_snapshot(location):
-
 	recent_snapshot = None
 	recent_unixtime = 0
 
@@ -53,7 +52,7 @@ def rotate_snapshots(location, interval, numcopies):
 if __name__ == "__main__":
 	from optparse import OptionParser
 
-	usage = "usage: %prog [options] hourly|daily|weekly source destination"
+	usage = "usage: %prog [options] hourly|daily|weekly source destination [--] [extra arguments to pass to rsync]"
 
 	def print_usage():
 		print >>sys.stderr, usage
@@ -68,7 +67,7 @@ if __name__ == "__main__":
 
 	(opts, args) = parser.parse_args()
 
-	if len(args) != 3 or args[0] not in ("hourly", "daily", "weekly"):
+	if len(args) < 3 or args[0] not in ("hourly", "daily", "weekly"):
 		print_usage()
 
 	interval, source, destination = args[0:3]
@@ -97,6 +96,9 @@ if __name__ == "__main__":
 	if opts.verbose:
 		rsync_args.remove("-q")
 		rsync_args += ['-v', '--progress']
+
+	if len(args) > 3:
+		rsync_args += args[3:]
 
 	tmp_snapshot = os.path.join(destination, ".%s.0" % interval)
 
