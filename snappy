@@ -6,9 +6,9 @@ __copyright__ = "Copyright 2010 Jeff Fisher"
 __license__ = "GPL v2"
 
 import sys
+import os
 import os.path
 import shutil
-import os
 import glob
 
 rsync_args = ["-q", "-a", "-H", "-x", "--delete-during", "--numeric-ids"]
