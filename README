@@ -1,0 +1,33 @@
+snappy
+======
+
+snappy is a backup program for managing rsync based snapshots.
+
+To check out the most recent release, type:
+  git clone git://github.com/guppy/snappy.git
+
+Usage
+=====
+
+  snappy -n N interval source destination
+
+-n: the number of copies to keep
+interval: hourly, daily, or weekly
+source: any source argument you would normally pass to rsync
+destination: the destination directory that already exists
+
+example:
+
+  snappy -n 6 hourly root@example.com:/home /mnt/backups/example.com/home
+
+If you ran that every 4 hours via cron, you would end up with directories named
+hourly.0 to hourly.5, each of which contain a complete snapshot of
+example.com's /home filesystem.
+
+Requirements
+============
+
+rsync >= 2.5.6
+python >= 2.4
+
+A destination volume that can handle doing hard-links.
