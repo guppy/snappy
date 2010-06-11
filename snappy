@@ -16,6 +16,7 @@ rsync_args = ["-q", "-a", "-H", "-x", "--delete-during", "--numeric-ids"]
 # 0 = Success
 # 24 = Partial transfer due to vanished source files
 # 25 = The --max-delete limit stopped deletions
+# Anything else is considered a failure and the backup will be deleted
 rsync_allowed_exitcodes = (0, 24, 25)
 
 def find_snapshot(location):
@@ -61,7 +62,8 @@ if __name__ == "__main__":
 	parser = OptionParser(usage=usage)
 	parser.add_option("-f", "--force", action="store_true", dest="force", default=0, help="Force the backup to run even if the previous backup failed")
 	parser.add_option("-n", "--num", type="int", dest="numcopies", default=0, help="The number of backups to keep for a specific interval")
-	parser.add_option("-v", "--verbose", action="store_true", dest="verbose", default=0, help="Be more verbose")
+	parser.add_option("-v", "--verbose", action="store_true", dest="verbose", default=0, help="Be verbose")
+	parser.add_option("--no-rsync-defaults", action="store_true", dest="no_rsync_defaults", default=False, help="Removes all our default rsync arguments except for --link-dest")
 	parser.add_option("--no-H", action="store_false", dest="hardlinks", default=True, help="Turns off rsync's preserve hard links option")
 	parser.add_option("--no-x", action="store_false", dest="onefs", default=True, help="Turns off rsync's one-file-system option")
 
@@ -82,11 +84,6 @@ if __name__ == "__main__":
 
 	destination = os.path.realpath(destination)
 
-	last_snapshot = find_snapshot(destination)
-
-	if last_snapshot is not None:
-		rsync_args.append("--link-dest=%s" % last_snapshot)
-
 	if not opts.onefs:
 		rsync_args.remove("-x")
 
@@ -96,6 +93,14 @@ if __name__ == "__main__":
 	if opts.verbose:
 		rsync_args.remove("-q")
 		rsync_args += ['-v', '--progress']
+
+	if opts.no_rsync_defaults:
+		rsync_args = []
+
+	last_snapshot = find_snapshot(destination)
+
+	if last_snapshot is not None:
+		rsync_args.append("--link-dest=%s" % last_snapshot)
 
 	if len(args) > 3:
 		rsync_args += args[3:]
