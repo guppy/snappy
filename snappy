@@ -1,0 +1,142 @@
+#!/bin/sh
+""""exec ${PYTHON:-python} -t $0 "$@";" """
+
+__author__ = "Jeff Fisher <guppy@techmonkeys.org>"
+__copyright__ = "Copyright 2010 Jeff Fisher"
+__license__ = "GPL v2"
+__version__ = 20100611.3
+
+import sys
+import os.path
+import shutil
+import os
+import glob
+
+rsync_args = ["-q", "-a", "-H", "-x", "--delete-during", "--numeric-ids"]
+
+rsync_fatal_exitcodes = {
+	1: "Syntax or usage error",
+	2: "Protocol incompatibility",
+	3: "Errors selecting input/output files, dirs",
+	4: "Requested action not supported: an attempt was made to manipulate 64-bit files on a platform that cannot support them; or an option was specified that is supported by the client and not by the server.",
+	5: "Error starting client-server protocol",
+	10: "Error in socket I/O",
+	11: "Error in file I/O",
+	12: "Error in rsync protocol data stream",
+	13: "Errors with program diagnostics",
+	14: "Error in IPC code",
+	20: "Received SIGUSR1 or SIGINT",
+	21: "Some error returned by waitpid()",
+	22: "Error allocating core memory buffers",
+	23: "Partial transfer due to error",
+	99: "Rsync did not exit properly",
+}
+
+def find_snapshot(location):
+
+	recent_snapshot = None
+	recent_unixtime = 0
+
+	for interval in ('hourly', 'daily', 'weekly', 'monthly'):
+		for snapshot in glob.glob(os.path.join(location, "%s.*" % interval)):
+			mtime = os.path.getmtime(snapshot)
+			if mtime > recent_unixtime:
+				recent_unixtime = mtime
+				recent_snapshot = snapshot
+
+	return recent_snapshot
+					
+def rotate_snapshots(location, interval, numcopies):
+	numcopies -= 1
+	highest = os.path.join(location, "%s.%d" % (interval, numcopies))
+
+	if os.path.exists(highest):
+		shutil.rmtree(highest)
+
+	for i in range(numcopies - 1, -1, -1): 
+		src = os.path.join(location, "%s.%d" % (interval, i))
+		dst = os.path.join(location, "%s.%d" % (interval, i + 1))
+
+		if os.path.exists(src):
+			shutil.move(src, dst)
+
+	dst = os.path.join(location, "%s.0" % interval)
+	shutil.move(os.path.join(location, ".%s.0" % interval), dst)
+	os.utime(dst, None)
+
+if __name__ == "__main__":
+	from optparse import OptionParser
+
+	usage = "usage: %prog [options] hourly|daily|weekly source destination"
+
+	def print_usage():
+		print >>sys.stderr, usage
+		sys.exit(1)
+		
+	parser = OptionParser(usage=usage)
+	parser.add_option("-f", "--force", action="store_true", dest="force", default=0, help="Force the backup to run even if the previous backup failed")
+	parser.add_option("-n", "--num", type="int", dest="numcopies", default=0, help="The number of backups to keep for a specific interval")
+	parser.add_option("-v", "--verbose", action="store_true", dest="verbose", default=0, help="Be more verbose")
+	parser.add_option("--no-H", action="store_false", dest="hardlinks", default=True, help="Turns off rsync's preserve hard links option")
+	parser.add_option("--no-x", action="store_false", dest="onefs", default=True, help="Turns off rsync's one-file-system option")
+
+	(opts, args) = parser.parse_args()
+
+	if len(args) != 3 or args[0] not in ("hourly", "daily", "weekly"):
+		print_usage()
+
+	interval, source, destination = args[0:3]
+
+	if not os.path.exists(destination):
+		print >>sys.stderr, "cannot access %s: No such file or directory" % destination
+		sys.exit(1)
+
+	if not os.path.isdir(destination):
+		print >>sys.stderr, "cannot create directory %s: File exists" % destination
+		sys.exit(1)
+
+	destination = os.path.realpath(destination)
+
+	last_snapshot = find_snapshot(destination)
+
+	if last_snapshot is not None:
+		rsync_args.append("--link-dest=%s" % last_snapshot)
+
+	if not opts.onefs:
+		rsync_args.remove("-x")
+
+	if not opts.hardlinks:
+		rsync_args.remove("-H")
+
+	if opts.verbose:
+		rsync_args.remove("-q")
+		rsync_args += ['-v', '--progress']
+
+	tmp_snapshot = os.path.join(destination, ".%s.0" % interval)
+
+	if os.path.exists(tmp_snapshot):
+		if opts.force:
+			shutil.rmtree(tmp_snapshot)
+		else:
+			print >>sys.stderr, "cannot create backup %s: File exists" % tmp_snapshot
+			sys.exit(1)
+
+	ret = os.system("rsync %s %s/. %s" % (" ".join(rsync_args), source, tmp_snapshot))
+
+	if os.WIFEXITED(ret):
+		exitcode = os.WEXITSTATUS(ret)
+	else:
+		exitcode = 99
+
+	if exitcode == 0 or exitcode not in rsync_fatal_exitcodes:
+		rotate_snapshots(destination, interval, opts.numcopies)
+	else:
+		
+		print >>sys.stderr, "cannot finish backup %s: %s" % (tmp_snapshot, rsync_fatal_exitcodes[exitcode])
+	
+		if os.path.exists(tmp_snapshot):
+			shutil.rmtree(tmp_snapshot)
+
+		sys.exit(1)
+	
+# vim: filetype=python noexpandtab	
