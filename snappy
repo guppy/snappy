@@ -4,7 +4,6 @@
 __author__ = "Jeff Fisher <guppy@techmonkeys.org>"
 __copyright__ = "Copyright 2010 Jeff Fisher"
 __license__ = "GPL v2"
-__version__ = 20100611.3
 
 import sys
 import os.path
@@ -14,23 +13,10 @@ import glob
 
 rsync_args = ["-q", "-a", "-H", "-x", "--delete-during", "--numeric-ids"]
 
-rsync_fatal_exitcodes = {
-	1: "Syntax or usage error",
-	2: "Protocol incompatibility",
-	3: "Errors selecting input/output files, dirs",
-	4: "Requested action not supported: an attempt was made to manipulate 64-bit files on a platform that cannot support them; or an option was specified that is supported by the client and not by the server.",
-	5: "Error starting client-server protocol",
-	10: "Error in socket I/O",
-	11: "Error in file I/O",
-	12: "Error in rsync protocol data stream",
-	13: "Errors with program diagnostics",
-	14: "Error in IPC code",
-	20: "Received SIGUSR1 or SIGINT",
-	21: "Some error returned by waitpid()",
-	22: "Error allocating core memory buffers",
-	23: "Partial transfer due to error",
-	99: "Rsync did not exit properly",
-}
+# 0 = Success
+# 24 = Partial transfer due to vanished source files
+# 25 = The --max-delete limit stopped deletions
+rsync_allowed_exitcodes = (0, 24, 25)
 
 def find_snapshot(location):
 
@@ -126,13 +112,16 @@ if __name__ == "__main__":
 	if os.WIFEXITED(ret):
 		exitcode = os.WEXITSTATUS(ret)
 	else:
-		exitcode = 99
+		exitcode = -1
 
-	if exitcode == 0 or exitcode not in rsync_fatal_exitcodes:
+	if not os.path.exists(tmp_snapshot):
+		print >>sys.stderr, "cannot access %s: No such file or directory" % tmp_snapshot
+		sys.exit(1)
+
+	if exitcode in rsync_allowed_exitcodes:
 		rotate_snapshots(destination, interval, opts.numcopies)
 	else:
-		
-		print >>sys.stderr, "cannot finish backup %s: %s" % (tmp_snapshot, rsync_fatal_exitcodes[exitcode])
+		print >>sys.stderr, "cannot finish backup %s: rsync executed with exit code %d" % (tmp_snapshot, exitcode)
 	
 		if os.path.exists(tmp_snapshot):
 			shutil.rmtree(tmp_snapshot)
