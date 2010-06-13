@@ -82,7 +82,7 @@ if __name__ == "__main__":
 		print >>sys.stderr, "cannot create directory %s: File exists" % destination
 		sys.exit(1)
 
-	destination = os.path.realpath(destination)
+	destination = os.path.expanduser(destination)
 
 	if not opts.onefs:
 		rsync_args.remove("-x")
