@@ -9,20 +9,18 @@ To check out the most recent release, type:
 Usage
 =====
 
-  snappy -n N interval source destination
+  snappy [-c config file or dir] interval
 
--n: the number of copies to keep
+-c: the configuration file or directory (will default to a few locations if not specified)
 interval: hourly, daily, or weekly
-source: any source argument you would normally pass to rsync
-destination: the destination directory that already exists
 
 example:
 
-  snappy -n 6 hourly root@example.com:/home /mnt/backups/example.com/home
+  snappy -c snappy.conf hourly
 
 If you ran that every 4 hours via cron, you would end up with directories named
-hourly.0 to hourly.5, each of which contain a complete snapshot of
-example.com's /home filesystem.
+hourly.0 to hourly.5, each of which contain a complete snapshot of whatever 
+backups you specified in that configuration file.
 
 Requirements
 ============
