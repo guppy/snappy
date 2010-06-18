@@ -66,14 +66,12 @@ def take_backup(settings, source, destination, interval):
 
 	destination = os.path.join(root, destination)
 
-	try:
-		os.makedirs(destination)
-	except:
-		pass
-
 	if not os.path.exists(destination):
-		print >>sys.stderr, "cannot access %s: No such file or directory" % destination
-		return False
+		try:
+			os.makedirs(destination)
+		except Exception, e:
+			print >>sys.stderr, "Unable to create backup directory:", e
+			return False
 
 	if not os.path.isdir(destination):
 		print >>sys.stderr, "cannot create directory %s: File exists" % destination
@@ -206,7 +204,7 @@ def process_config(configfile, interval):
 					try:
 						os.makedirs(root["value"])
 					except Exception, e:
-						print >>sys.stderr, "Unable to create root:", e
+						print >>sys.stderr, "Unable to create backup directory:", e
 						return False
 		else:
 			source = None
