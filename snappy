@@ -16,7 +16,7 @@ import ConfigParser
 global_defaults = {
 	"root": {"type": "string", "value": None, "default": True},
 	"rsync_cmd": {"type": "string", "value": "rsync", "default": True},
-	"rsync_args": {"type": "string", "value": "-qaHz --delete-during --numeric-ids", "default": True},
+	"rsync_args": {"type": "string", "value": "-qaHx --delete-during --numeric-ids", "default": True},
 	"hourly": {"type": "integer", "value": 6, "default": True},
 	"daily": {"type": "integer", "value": 7, "default": True},
 	"weekly": {"type": "integer", "value": 4, "default": True},
