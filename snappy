@@ -28,6 +28,16 @@ global_defaults = {
 # Anything else is considered a failure and the backup will be deleted
 rsync_allowed_exitcodes = (0, 24, 25)
 
+def putlog(*args, **kargs):
+	level = kargs.get("level", 0)
+	try:
+		verbosity = opts.verbosity
+	except:
+		verbosity = 0
+
+	if level <= verbosity:
+		print " ".join(args)
+
 def find_snapshot(location):
 	recent_snapshot = None
 	recent_unixtime = 0
@@ -60,6 +70,7 @@ def rotate_snapshots(location, interval, numcopies):
 	os.utime(dst, None)
 
 def take_backup(settings, source, destination, interval):
+	putlog("Starting a backup of", source, "...", level=1)
 	root = settings["root"]["value"]
 	rsync_args = [settings["rsync_args"]["value"],]
 
@@ -71,6 +82,8 @@ def take_backup(settings, source, destination, interval):
 		except Exception, e:
 			print >>sys.stderr, "Unable to create backup directory:", e
 			return False
+		else:
+			putlog("Created", destination, level=2)
 
 	if not os.path.isdir(destination):
 		print >>sys.stderr, "cannot create directory %s: File exists" % destination
@@ -79,6 +92,7 @@ def take_backup(settings, source, destination, interval):
 	last_snapshot = find_snapshot(destination)
 
 	if last_snapshot is not None:
+		putlog("Found last snapshot @", last_snapshot, level=2) 
 		rsync_args.append("--link-dest=%s" % last_snapshot)
 
 	tmp_snapshot = os.path.join(destination, ".%s.0" % interval)
@@ -87,6 +101,7 @@ def take_backup(settings, source, destination, interval):
 		print >>sys.stderr, "cannot create backup %s: File exists" % tmp_snapshot
 		return False
 
+	putlog("Running: %s %s %s/. %s"  % (settings["rsync_cmd"]["value"], " ".join(rsync_args), source, tmp_snapshot), level=2)
 	ret = os.system("%s %s %s/. %s" % (settings["rsync_cmd"]["value"], " ".join(rsync_args), source, tmp_snapshot))
 
 	if os.WIFEXITED(ret):
@@ -99,6 +114,7 @@ def take_backup(settings, source, destination, interval):
 		return False
 
 	if exitcode in rsync_allowed_exitcodes:
+		putlog("Rotating previous snapshots ...", level=2)
 		rotate_snapshots(destination, interval, settings[interval]["value"])
 	else:
 		print >>sys.stderr, "cannot finish backup %s: rsync executed with exit code %d" % (tmp_snapshot, exitcode)
@@ -155,6 +171,7 @@ def process_config(configfile, interval):
 		if config.has_option(group, "skip"):
 			skips = [i.strip() for i in config.get(group, "skip").replace(" ", "").split(",")]
 			if interval in skips:
+				putlog("Skipping group '%s' because this is a %s backup!" % (group, interval), level=1)
 				continue
 	
 		settings = copy.deepcopy(defaults)
@@ -209,6 +226,8 @@ def process_config(configfile, interval):
 					except Exception, e:
 						print >>sys.stderr, "Unable to create backup directory:", e
 						return False
+					else:
+						putlog("Created", root["value"], level=2)
 		else:
 			source = None
 
@@ -222,12 +241,14 @@ def process_config(configfile, interval):
 				if setting == "backup":
 					for i in value.split(","):
 						i = i.strip()
-						take_backup(settings, source + i, i, interval)
+						take_backup(settings, source + i, i.lstrip("/"), interval)
+						putlog("", level=2)
 					continue
 				else:
 					value = source + value
 
 			take_backup(settings, value, setting, interval)
+			putlog("", level=2)
 
 	return True
 
@@ -239,6 +260,7 @@ if __name__ == "__main__":
 	parser = OptionParser(usage=usage)
 	parser.add_option("-c", "--config", action="store", dest="config", default=None, help="Backup configuration file or directory")
 	parser.add_option("-d", "--defaults", action="store_true", dest="show_defaults", default=False, help="Display a list of defaults")
+	parser.add_option("-v", "--verbose", action="count", dest="verbosity", default=0, help="Increase verbosity level")
 
 	(opts, args) = parser.parse_args()
 
@@ -276,6 +298,7 @@ if __name__ == "__main__":
 		sys.exit(1)
 
 	for config in opts.config:
+		putlog("Processing", config, "...", level=2)
 		process_config(config, args[0])
 
 # vim: filetype=python noexpandtab	
