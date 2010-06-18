@@ -13,7 +13,7 @@ import shutil
 import sys
 import ConfigParser
 
-defaults = {
+global_defaults = {
 	"root": {"type": "string", "value": None, "default": True},
 	"rsync_cmd": {"type": "string", "value": "rsync", "default": True},
 	"rsync_args": {"type": "string", "value": "-qaHz --delete-during --numeric-ids", "default": True},
@@ -60,7 +60,6 @@ def rotate_snapshots(location, interval, numcopies):
 	os.utime(dst, None)
 
 def take_backup(settings, source, destination, interval):
-
 	root = settings["root"]["value"]
 	rsync_args = [settings["rsync_args"]["value"],]
 
@@ -112,7 +111,9 @@ def take_backup(settings, source, destination, interval):
 	return True
 
 def process_config(configfile, interval):
-	global defaults
+	if not os.path.isfile(configfile):
+		print >>sys.stderr, "cannot access %s: No such file or directory" % configfile
+		return
 
 	config = ConfigParser.SafeConfigParser()
 	try:
@@ -120,6 +121,8 @@ def process_config(configfile, interval):
 	except Exception, e:
 		print >>sys.stderr, e
 		return False
+
+	defaults = copy.deepcopy(global_defaults)
 
 	if config.has_section("default"):
 		for setting, value in config.items("default"):
@@ -188,10 +191,10 @@ def process_config(configfile, interval):
 			print >>sys.stderr, "The 'root' option in '%s' must be set" % group
 			return False
 
-		root["value"] = os.path.realpath(os.path.expanduser(root["value"]))
+		root["value"] = os.path.realpath(root["value"])
 
 		if not os.path.isdir(root["value"]):
-			print >>sys.stderr, "%s is not a directory" % root["value"]
+			print >>sys.stderr, "cannot access %s: No such file or directory" % root["value"]
 			return False
 
 		if config.has_option(group, "source"):
@@ -248,8 +251,7 @@ if __name__ == "__main__":
 	if opts.config is None:
 		for f, t in (('snappy.conf', 'file'), ('snappy.d', 'dir')):
 			for x in ("", "~/.", "/etc/"):
-				tmp = os.path.realpath(os.path.expanduser("%s%s" % (f, x)))
-			
+				tmp = os.path.realpath("%s%s" % (f, x))
 				if t == "file" and os.path.isfile(tmp):
 					opts.config = (tmp,)
 					break
@@ -257,6 +259,10 @@ if __name__ == "__main__":
 				if t == "dir" and os.path.isdir(tmp):
 					opts.config = glob.glob(os.path.join(tmp, "*.conf"))
 					break
+	elif os.path.isdir(opts.config):
+		opts.config = glob.glob(os.path.join(os.path.realpath(opts.config), "*.conf"))
+	else:
+		opts.config = (opts.config,)
 
 	if opts.config is None:
 		print >>sys.stderr, "No configuration file or directory was found"
