@@ -5,13 +5,22 @@ __author__ = "Jeff Fisher <guppy@techmonkeys.org>"
 __copyright__ = "Copyright 2010 Jeff Fisher"
 __license__ = "GPL v2"
 
-import sys
+import copy
+import glob
 import os
 import os.path
 import shutil
-import glob
+import sys
+import ConfigParser
 
-rsync_args = ["-q", "-a", "-H", "-x", "--delete-during", "--numeric-ids"]
+defaults = {
+	"root": {"type": "string", "value": None, "default": True},
+	"rsync_cmd": {"type": "string", "value": "rsync", "default": True},
+	"rsync_args": {"type": "string", "value": "-qaHz --delete-during --numeric-ids", "default": True},
+	"hourly": {"type": "integer", "value": 6, "default": True},
+	"daily": {"type": "integer", "value": 7, "default": True},
+	"weekly": {"type": "integer", "value": 4, "default": True},
+}
 
 # 0 = Success
 # 24 = Partial transfer due to vanished source files
@@ -50,71 +59,38 @@ def rotate_snapshots(location, interval, numcopies):
 	shutil.move(os.path.join(location, ".%s.0" % interval), dst)
 	os.utime(dst, None)
 
-if __name__ == "__main__":
-	from optparse import OptionParser
+def take_backup(settings, source, destination, interval):
 
-	usage = "usage: %prog [options] hourly|daily|weekly source destination [--] [extra arguments to pass to rsync]"
+	root = settings["root"]["value"]
+	rsync_args = [settings["rsync_args"]["value"],]
 
-	def print_usage():
-		print >>sys.stderr, usage
-		sys.exit(1)
-		
-	parser = OptionParser(usage=usage)
-	parser.add_option("-f", "--force", action="store_true", dest="force", default=0, help="Force the backup to run even if the previous backup failed")
-	parser.add_option("-n", "--num", type="int", dest="numcopies", default=0, help="The number of backups to keep for a specific interval")
-	parser.add_option("-v", "--verbose", action="store_true", dest="verbose", default=0, help="Be verbose")
-	parser.add_option("--no-rsync-defaults", action="store_true", dest="no_rsync_defaults", default=False, help="Removes all our default rsync arguments except for --link-dest")
-	parser.add_option("--no-H", action="store_false", dest="hardlinks", default=True, help="Turns off rsync's preserve hard links option")
-	parser.add_option("--no-x", action="store_false", dest="onefs", default=True, help="Turns off rsync's one-file-system option")
+	destination = os.path.join(root, destination)
 
-	(opts, args) = parser.parse_args()
-
-	if len(args) < 3 or args[0] not in ("hourly", "daily", "weekly"):
-		print_usage()
-
-	interval, source, destination = args[0:3]
+	try:
+		os.makedirs(destination)
+	except:
+		pass
 
 	if not os.path.exists(destination):
 		print >>sys.stderr, "cannot access %s: No such file or directory" % destination
-		sys.exit(1)
+		return False
 
 	if not os.path.isdir(destination):
 		print >>sys.stderr, "cannot create directory %s: File exists" % destination
-		sys.exit(1)
-
-	destination = os.path.expanduser(destination)
-
-	if not opts.onefs:
-		rsync_args.remove("-x")
-
-	if not opts.hardlinks:
-		rsync_args.remove("-H")
-
-	if opts.verbose:
-		rsync_args.remove("-q")
-		rsync_args += ['-v', '--progress']
-
-	if opts.no_rsync_defaults:
-		rsync_args = []
+		return False
 
 	last_snapshot = find_snapshot(destination)
 
 	if last_snapshot is not None:
 		rsync_args.append("--link-dest=%s" % last_snapshot)
 
-	if len(args) > 3:
-		rsync_args += args[3:]
-
 	tmp_snapshot = os.path.join(destination, ".%s.0" % interval)
 
 	if os.path.exists(tmp_snapshot):
-		if opts.force:
-			shutil.rmtree(tmp_snapshot)
-		else:
-			print >>sys.stderr, "cannot create backup %s: File exists" % tmp_snapshot
-			sys.exit(1)
+		print >>sys.stderr, "cannot create backup %s: File exists" % tmp_snapshot
+		return False
 
-	ret = os.system("rsync %s %s/. %s" % (" ".join(rsync_args), source, tmp_snapshot))
+	ret = os.system("%s %s %s/. %s" % (settings["rsync_cmd"]["value"], " ".join(rsync_args), source, tmp_snapshot))
 
 	if os.WIFEXITED(ret):
 		exitcode = os.WEXITSTATUS(ret)
@@ -123,16 +99,172 @@ if __name__ == "__main__":
 
 	if not os.path.exists(tmp_snapshot):
 		print >>sys.stderr, "cannot access %s: No such file or directory" % tmp_snapshot
-		sys.exit(1)
+		return False
 
 	if exitcode in rsync_allowed_exitcodes:
-		rotate_snapshots(destination, interval, opts.numcopies)
+		rotate_snapshots(destination, interval, settings[interval]["value"])
 	else:
 		print >>sys.stderr, "cannot finish backup %s: rsync executed with exit code %d" % (tmp_snapshot, exitcode)
 	
 		if os.path.exists(tmp_snapshot):
 			shutil.rmtree(tmp_snapshot)
 
-		sys.exit(1)
+		return False
+
+	return True
+
+def process_config(configfile, interval):
+	global defaults
+
+	config = ConfigParser.SafeConfigParser()
+	try:
+		config.read(configfile)
+	except Exception, e:
+		print >>sys.stderr, e
+		return False
+
+	if config.has_section("default"):
+		for setting, value in config.items("default"):
+			if setting in defaults:
+				tmp = defaults.get(setting)
+				if tmp["type"] == "string":
+					try:
+						tmp["value"] = config.get("default", setting)
+					except ValueError:
+						print >>sys.stderr, "Unable to get the value for '%s' in the default section" % setting
+						return False
+				elif tmp["type"] == "boolean":
+					try:
+						tmp["value"] = config.getboolean("default", setting)
+					except ValueError:
+						print >>sys.stderr, "Unable to get a boolean value for '%s' in the default section" % setting
+						return False
+				elif tmp["type"] == "integer":
+					try:
+						tmp["value"] = config.getint("default", setting)
+					except ValueError:
+						print >>sys.stderr, "Unable to get an integer value for '%s' in the default section" % setting
+						return False
 	
+				defaults[setting] = tmp
+			else:
+				return (False, "Unknown setting '%s'" % setting)
+
+	for group in [i for i in config.sections() if i != "default"]:
+		if config.has_option(group, "skip"):
+			skips = [i.strip() for i in config.get(group, "skip").replace(" ", "").split(",")]
+			if interval in skips:
+				continue
+	
+		settings = copy.deepcopy(defaults)
+		settings["source"] = {"type": "string", "value": None, "default": True}
+
+		for setting in settings:
+			if config.has_option(group, setting):
+				tmp = settings.get(setting)
+				if tmp["type"] == "string":
+					try:
+						tmp["value"] = config.get(group, setting)
+					except ValueError:
+						print >>sys.stderr, "Unable to get the value for '%s' in the '%s' group" % (setting, group)
+						return False
+				elif tmp["type"] == "boolean":
+					try:
+						tmp["value"] = config.getboolean(group, setting)
+					except ValueError:
+						print >>sys.stderr, "Unable to get a boolean value for '%s' in the '%s' group" % (setting, group)
+						return False
+				elif tmp["type"] == "integer":
+					try:
+						tmp["value"] = config.getint(group, setting)
+					except ValueError:
+						print >>sys.stderr, "Unable to get an integer value for '%s' in the '%s' group" % (setting, group)
+						return False
+
+				tmp["default"] = False
+				settings[setting] = tmp
+
+		root = settings["root"]
+
+		if root["value"] is None:
+			print >>sys.stderr, "The 'root' option in '%s' must be set" % group
+			return False
+
+		root["value"] = os.path.realpath(os.path.expanduser(root["value"]))
+
+		if not os.path.isdir(root["value"]):
+			print >>sys.stderr, "%s is not a directory" % root["value"]
+			return False
+
+		if config.has_option(group, "source"):
+			source = config.get(group, "source")
+
+			if root["default"]:
+				root["value"] = os.path.join(root["value"], group)
+
+				if not os.path.exists(root["value"]):
+					try:
+						os.makedirs(root["value"])
+					except Exception, e:
+						print >>sys.stderr, "Unable to create root:", e
+						return False
+		else:
+			source = None
+
+		settings["root"] = root
+
+		for setting, value in config.items(group):
+			if setting in settings or setting == "skip":
+				continue
+	
+			if source is not None:
+				if setting == "backup":
+					for i in value.split(","):
+						i = i.strip()
+						take_backup(settings, source + i, i, interval)
+					continue
+				else:
+					value = source + value
+
+			take_backup(settings, value, setting, interval)
+
+	return True
+
+if __name__ == "__main__":
+	from optparse import OptionParser
+
+	usage = "usage: %prog [options] hourly|daily|weekly"
+
+	def print_usage():
+		print >>sys.stderr, usage
+		sys.exit(1)
+		
+	parser = OptionParser(usage=usage)
+	parser.add_option("-c", "--config", action="store", dest="config", default=None, help="Backup configuration file or directory")
+
+	(opts, args) = parser.parse_args()
+
+	if len(args) != 1 or args[0] not in ("hourly", "daily", "weekly"):
+		print_usage()
+
+	if opts.config is None:
+		for f, t in (('snappy.conf', 'file'), ('snappy.d', 'dir')):
+			for x in ("", "~/.", "/etc/"):
+				tmp = os.path.realpath(os.path.expanduser("%s%s" % (f, x)))
+			
+				if t == "file" and os.path.isfile(tmp):
+					opts.config = (tmp,)
+					break
+
+				if t == "dir" and os.path.isdir(tmp):
+					opts.config = glob.glob(os.path.join(tmp, "*.conf"))
+					break
+
+	if opts.config is None:
+		print >>sys.stderr, "No configuration file or directory was found"
+		sys.exit(1)
+
+	for config in opts.config:
+		process_config(config, args[0])
+
 # vim: filetype=python noexpandtab	
