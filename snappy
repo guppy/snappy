@@ -236,17 +236,24 @@ if __name__ == "__main__":
 
 	usage = "usage: %prog [options] hourly|daily|weekly"
 
-	def print_usage():
-		print >>sys.stderr, usage
-		sys.exit(1)
-		
 	parser = OptionParser(usage=usage)
 	parser.add_option("-c", "--config", action="store", dest="config", default=None, help="Backup configuration file or directory")
+	parser.add_option("-d", "--defaults", action="store_true", dest="show_defaults", default=False, help="Display a list of defaults")
 
 	(opts, args) = parser.parse_args()
 
+	if opts.show_defaults:
+		longest = max([len(i) for i in global_defaults.keys()])
+		for name, tmp in global_defaults.iteritems():
+			if name == "root":
+				continue
+
+			print " " * (longest - len(name)), "%s: %s" % (name, tmp["value"])
+		sys.exit(0)
+
 	if len(args) != 1 or args[0] not in ("hourly", "daily", "weekly"):
-		print_usage()
+		print parser.get_usage()
+		sys.exit(1)
 
 	if opts.config is None:
 		for f, t in (('snappy.conf', 'file'), ('snappy.d', 'dir')):
