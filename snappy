@@ -11,6 +11,7 @@ import os
 import os.path
 import shutil
 import sys
+import types
 import ConfigParser
 
 global_defaults = {
@@ -148,19 +149,19 @@ def process_config(configfile, interval):
 		for setting, value in config.items("default"):
 			if setting in defaults:
 				tmp = defaults.get(setting)
-				if type(tmp).__name__ in ('str', 'NoneType'):
+				if type(tmp) in (types.StringType, types.NoneType):
 					try:
 						tmp = config.get("default", setting)
 					except ValueError:
 						print >>sys.stderr, "Unable to get the value for '%s' in the default section" % setting
 						return False
-				elif type(tmp).__name__ == 'bool':
+				elif type(tmp) == types.BooleanType:
 					try:
 						tmp = config.getboolean("default", setting)
 					except ValueError:
 						print >>sys.stderr, "Unable to get a boolean value for '%s' in the default section" % setting
 						return False
-				elif type(tmp).__name__ == 'int':
+				elif type(tmp) == types.IntType:
 					try:
 						tmp = config.getint("default", setting)
 					except ValueError:
@@ -184,19 +185,19 @@ def process_config(configfile, interval):
 		for setting in settings:
 			if config.has_option(group, setting):
 				tmp = settings.get(setting)
-				if type(tmp).__name__ in ('str', 'NoneType'):
+				if type(tmp) in (types.StringType, types.NoneType):
 					try:
 						tmp = config.get(group, setting)
 					except ValueError:
 						print >>sys.stderr, "Unable to get the value for '%s' in the '%s' group" % (setting, group)
 						return False
-				elif type(tmp).__name__ == 'bool':
+				elif type(tmp) == types.BooleanType:
 					try:
 						tmp = config.getboolean(group, setting)
 					except ValueError:
 						print >>sys.stderr, "Unable to get a boolean value for '%s' in the '%s' group" % (setting, group)
 						return False
-				elif type(tmp).__name__ == 'int':
+				elif type(tmp) == types.IntType:
 					try:
 						tmp = config.getint(group, setting)
 					except ValueError:
