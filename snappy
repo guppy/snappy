@@ -14,12 +14,13 @@ import sys
 import ConfigParser
 
 global_defaults = {
-	"root": {"type": "string", "value": None, "default": True},
-	"rsync_cmd": {"type": "string", "value": "rsync", "default": True},
-	"rsync_args": {"type": "string", "value": "-qaHx --delete-during --numeric-ids", "default": True},
-	"hourly": {"type": "integer", "value": 6, "default": True},
-	"daily": {"type": "integer", "value": 7, "default": True},
-	"weekly": {"type": "integer", "value": 4, "default": True},
+	"root": None,
+	"exclude": "",
+	"rsync_cmd": "rsync",
+	"rsync_args": "-qaHx --delete-during --numeric-ids",
+	"hourly": 6,
+	"daily": 7,
+	"weekly": 4,
 }
 
 # 0 = Success
@@ -71,8 +72,8 @@ def rotate_snapshots(location, interval, numcopies):
 
 def take_backup(settings, source, destination, interval):
 	putlog("Starting a backup of", source, "...", level=1)
-	root = settings["root"]["value"]
-	rsync_args = [settings["rsync_args"]["value"],]
+	root = settings["root"]
+	rsync_args = [settings["rsync_args"],]
 
 	destination = os.path.join(root, destination)
 
@@ -95,14 +96,17 @@ def take_backup(settings, source, destination, interval):
 		putlog("Found last snapshot @", last_snapshot, level=2) 
 		rsync_args.append("--link-dest=%s" % last_snapshot)
 
+	if settings["exclude"] is not None:
+		rsync_args.append("--exclude=" + " --exclude=".join([x.strip() for x in settings["exclude"].split(",")]))
+
 	tmp_snapshot = os.path.join(destination, ".%s.0" % interval)
 
 	if os.path.exists(tmp_snapshot):
 		print >>sys.stderr, "cannot create backup %s: File exists" % tmp_snapshot
 		return False
 
-	putlog("Running: %s %s %s/. %s"  % (settings["rsync_cmd"]["value"], " ".join(rsync_args), source, tmp_snapshot), level=2)
-	ret = os.system("%s %s %s/. %s" % (settings["rsync_cmd"]["value"], " ".join(rsync_args), source, tmp_snapshot))
+	putlog("Running: %s %s %s/. %s"  % (settings["rsync_cmd"], " ".join(rsync_args), source, tmp_snapshot), level=2)
+	ret = os.system("%s %s %s/. %s" % (settings["rsync_cmd"], " ".join(rsync_args), source, tmp_snapshot))
 
 	if os.WIFEXITED(ret):
 		exitcode = os.WEXITSTATUS(ret)
@@ -115,7 +119,7 @@ def take_backup(settings, source, destination, interval):
 
 	if exitcode in rsync_allowed_exitcodes:
 		putlog("Rotating previous snapshots ...", level=2)
-		rotate_snapshots(destination, interval, settings[interval]["value"])
+		rotate_snapshots(destination, interval, settings[interval])
 	else:
 		print >>sys.stderr, "cannot finish backup %s: rsync executed with exit code %d" % (tmp_snapshot, exitcode)
 	
@@ -144,21 +148,21 @@ def process_config(configfile, interval):
 		for setting, value in config.items("default"):
 			if setting in defaults:
 				tmp = defaults.get(setting)
-				if tmp["type"] == "string":
+				if type(tmp).__name__ in ('str', 'NoneType'):
 					try:
-						tmp["value"] = config.get("default", setting)
+						tmp = config.get("default", setting)
 					except ValueError:
 						print >>sys.stderr, "Unable to get the value for '%s' in the default section" % setting
 						return False
-				elif tmp["type"] == "boolean":
+				elif type(tmp).__name__ == 'bool':
 					try:
-						tmp["value"] = config.getboolean("default", setting)
+						tmp = config.getboolean("default", setting)
 					except ValueError:
 						print >>sys.stderr, "Unable to get a boolean value for '%s' in the default section" % setting
 						return False
-				elif tmp["type"] == "integer":
+				elif type(tmp).__name__ == 'int':
 					try:
-						tmp["value"] = config.getint("default", setting)
+						tmp = config.getint("default", setting)
 					except ValueError:
 						print >>sys.stderr, "Unable to get an integer value for '%s' in the default section" % setting
 						return False
@@ -175,59 +179,58 @@ def process_config(configfile, interval):
 				continue
 	
 		settings = copy.deepcopy(defaults)
-		settings["source"] = {"type": "string", "value": None, "default": True}
+		settings["source"] = None
 
 		for setting in settings:
 			if config.has_option(group, setting):
 				tmp = settings.get(setting)
-				if tmp["type"] == "string":
+				if type(tmp).__name__ in ('str', 'NoneType'):
 					try:
-						tmp["value"] = config.get(group, setting)
+						tmp = config.get(group, setting)
 					except ValueError:
 						print >>sys.stderr, "Unable to get the value for '%s' in the '%s' group" % (setting, group)
 						return False
-				elif tmp["type"] == "boolean":
+				elif type(tmp).__name__ == 'bool':
 					try:
-						tmp["value"] = config.getboolean(group, setting)
+						tmp = config.getboolean(group, setting)
 					except ValueError:
 						print >>sys.stderr, "Unable to get a boolean value for '%s' in the '%s' group" % (setting, group)
 						return False
-				elif tmp["type"] == "integer":
+				elif type(tmp).__name__ == 'int':
 					try:
-						tmp["value"] = config.getint(group, setting)
+						tmp = config.getint(group, setting)
 					except ValueError:
 						print >>sys.stderr, "Unable to get an integer value for '%s' in the '%s' group" % (setting, group)
 						return False
 
-				tmp["default"] = False
 				settings[setting] = tmp
 
 		root = settings["root"]
 
-		if root["value"] is None:
+		if root is None:
 			print >>sys.stderr, "The 'root' option in '%s' must be set" % group
 			return False
 
-		root["value"] = os.path.realpath(root["value"])
+		root = os.path.realpath(root)
 
-		if not os.path.isdir(root["value"]):
-			print >>sys.stderr, "cannot access %s: No such file or directory" % root["value"]
+		if not os.path.isdir(root):
+			print >>sys.stderr, "cannot access %s: No such file or directory" % root
 			return False
 
 		if config.has_option(group, "source"):
 			source = config.get(group, "source")
 
-			if root["default"]:
-				root["value"] = os.path.join(root["value"], group)
+			if root == global_defaults["root"]:
+				root = os.path.join(root, group)
 
-				if not os.path.exists(root["value"]):
+				if not os.path.exists(root):
 					try:
-						os.makedirs(root["value"])
+						os.makedirs(root)
 					except Exception, e:
 						print >>sys.stderr, "Unable to create backup directory:", e
 						return False
 					else:
-						putlog("Created", root["value"], level=2)
+						putlog("Created", root, level=2)
 		else:
 			source = None
 
@@ -270,7 +273,7 @@ if __name__ == "__main__":
 			if name == "root":
 				continue
 
-			print " " * (longest - len(name)), "%s: %s" % (name, tmp["value"])
+			print " " * (longest - len(name)), "%s: %s" % (name, tmp)
 		sys.exit(0)
 
 	if len(args) != 1 or args[0] not in ("hourly", "daily", "weekly"):
@@ -301,4 +304,4 @@ if __name__ == "__main__":
 		putlog("Processing", config, "...", level=2)
 		process_config(config, args[0])
 
-# vim: filetype=python noexpandtab	
+# vim: filetype=python noexpandtab
