@@ -221,7 +221,7 @@ def process_config(configfile, interval):
 		if config.has_option(group, "source"):
 			source = config.get(group, "source")
 
-			if root == global_defaults["root"]:
+			if root == defaults["root"]:
 				root = os.path.join(root, group)
 
 				if not os.path.exists(root):
