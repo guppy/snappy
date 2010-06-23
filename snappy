@@ -22,6 +22,8 @@ global_defaults = {
 	"hourly": 6,
 	"daily": 7,
 	"weekly": 4,
+	"monthly": 3,
+	"skip": "",
 }
 
 # 0 = Success
@@ -98,7 +100,7 @@ def take_backup(settings, source, destination, interval):
 		rsync_args.append("--link-dest=%s" % last_snapshot)
 
 	if settings["exclude"] is not None:
-		rsync_args.append("--exclude=" + " --exclude=".join([x.strip() for x in settings["exclude"].split(",")]))
+		rsync_args.append("--exclude=\"" + "\" --exclude=\"".join([x.strip() for x in settings["exclude"].split(",")]) + "\"")
 
 	tmp_snapshot = os.path.join(destination, ".%s.0" % interval)
 
@@ -173,12 +175,6 @@ def process_config(configfile, interval):
 				return (False, "Unknown setting '%s'" % setting)
 
 	for group in [i for i in config.sections() if i != "default"]:
-		if config.has_option(group, "skip"):
-			skips = [i.strip() for i in config.get(group, "skip").replace(" ", "").split(",")]
-			if interval in skips:
-				putlog("Skipping group '%s' because this is a %s backup!" % (group, interval), level=1)
-				continue
-	
 		settings = copy.deepcopy(defaults)
 		settings["source"] = None
 
@@ -205,6 +201,10 @@ def process_config(configfile, interval):
 						return False
 
 				settings[setting] = tmp
+
+		if settings[interval] <= 0 or interval in [i.strip() for i in settings["skip"].split(",")]:
+			putlog("Skipping group '%s' because this is a %s backup!" % (group, interval), level=1)
+			continue
 
 		root = settings["root"]
 
@@ -259,7 +259,7 @@ def process_config(configfile, interval):
 if __name__ == "__main__":
 	from optparse import OptionParser
 
-	usage = "usage: %prog [options] hourly|daily|weekly"
+	usage = "usage: %prog [options] hourly|daily|weekly|monthly"
 
 	parser = OptionParser(usage=usage)
 	parser.add_option("-c", "--config", action="store", dest="config", default=None, help="Backup configuration file or directory")
@@ -277,7 +277,7 @@ if __name__ == "__main__":
 			print " " * (longest - len(name)), "%s: %s" % (name, tmp)
 		sys.exit(0)
 
-	if len(args) != 1 or args[0] not in ("hourly", "daily", "weekly"):
+	if len(args) != 1 or args[0] not in ("hourly", "daily", "weekly", "monthly"):
 		print parser.get_usage()
 		sys.exit(1)
 
