@@ -14,6 +14,8 @@ import sys
 import types
 import ConfigParser
 
+intervals = ("hourly", "daily", "weekly", "monthly")
+
 global_defaults = {
 	"root": None,
 	"exclude": "",
@@ -46,7 +48,7 @@ def find_snapshot(location):
 	recent_snapshot = None
 	recent_unixtime = 0
 
-	for interval in ('hourly', 'daily', 'weekly', 'monthly'):
+	for interval in intervals:
 		for snapshot in glob.glob(os.path.join(location, "%s.*" % interval)):
 			mtime = os.path.getmtime(snapshot)
 			if mtime > recent_unixtime:
@@ -259,7 +261,7 @@ def process_config(configfile, interval):
 if __name__ == "__main__":
 	from optparse import OptionParser
 
-	usage = "usage: %prog [options] hourly|daily|weekly|monthly"
+	usage = "usage: %prog [options] " + "|".join(intervals)
 
 	parser = OptionParser(usage=usage)
 	parser.add_option("-c", "--config", action="store", dest="config", default=None, help="Backup configuration file or directory")
@@ -277,7 +279,7 @@ if __name__ == "__main__":
 			print " " * (longest - len(name)), "%s: %s" % (name, tmp)
 		sys.exit(0)
 
-	if len(args) != 1 or args[0] not in ("hourly", "daily", "weekly", "monthly"):
+	if len(args) != 1 or args[0] not in intervals:
 		print parser.get_usage()
 		sys.exit(1)
 
