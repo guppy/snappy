@@ -28,6 +28,10 @@ global_defaults = {
 	"skip": "",
 }
 
+snappy_defaults = {
+	"lockfile": None,
+}
+
 # 0 = Success
 # 24 = Partial transfer due to vanished source files
 # 25 = The --max-delete limit stopped deletions
@@ -135,10 +139,74 @@ def take_backup(settings, source, destination, interval):
 
 	return True
 
+def get_setting(config, group, key, default):
+	if type(default) in (types.StringType, types.NoneType):
+		try:
+			tmp = config.get(group, key)
+		except ValueError:
+			print >>sys.stderr, "Unable to get the value for '%s' in the '%s' section" % (key, group)
+			return None
+	elif type(default) == types.BooleanType:
+		try:
+			tmp = config.getboolean(group, key)
+		except ValueError:
+			print >>sys.stderr, "Unable to get a boolean value for '%s' in the '%s' section" % (key, group)
+			return None
+	elif type(default) == types.IntType:
+		try:
+			tmp = config.getint(group, key)
+		except ValueError:
+			print >>sys.stderr, "Unable to get an integer value for '%s' in the '%s' section" % (key, group)
+			return None
+	else:
+		return None
+
+	return tmp
+
+def preprocess_configs(configs):
+	global snappy_defaults
+
+	for configfile in configs:
+		if not os.path.isfile(configfile):
+			print >>sys.stderr, "cannot access %s: No such file or directory" % configfile
+			sys.exit(1)
+
+		config = ConfigParser.SafeConfigParser()
+		try:
+			config.read(configfile)
+		except Exception, e:
+			print >>sys.stderr, e
+			sys.exit(1)
+
+		if config.has_section("snappy"):
+			for setting, value in config.items("snappy"):
+				if setting in snappy_defaults:
+					tmp = get_setting(config, "snappy", setting, snappy_defaults.get(setting))
+
+					if tmp is None:
+						sys.exit(1)
+	
+					snappy_defaults[setting] = tmp
+				else:
+					print >>sys.stderr, "Unknown setting '%s' in the snappy section" % setting
+					sys.exit(1)
+
+	lockfile = snappy_defaults["lockfile"]
+	if lockfile is not None:
+		if os.path.exists(lockfile):
+			putlog(lockfile, "already exists, exiting", level=1)
+			sys.exit(0)
+
+		try:
+			open(lockfile, "w").write("%d\n" % os.getpid())
+		except Exception, e:
+			print >>sys.stderr, e
+			sys.exit(1)
+	
 def process_config(configfile, interval):
 	if not os.path.isfile(configfile):
 		print >>sys.stderr, "cannot access %s: No such file or directory" % configfile
-		return
+		return False
 
 	config = ConfigParser.SafeConfigParser()
 	try:
@@ -152,55 +220,26 @@ def process_config(configfile, interval):
 	if config.has_section("default"):
 		for setting, value in config.items("default"):
 			if setting in defaults:
-				tmp = defaults.get(setting)
-				if type(tmp) in (types.StringType, types.NoneType):
-					try:
-						tmp = config.get("default", setting)
-					except ValueError:
-						print >>sys.stderr, "Unable to get the value for '%s' in the default section" % setting
-						return False
-				elif type(tmp) == types.BooleanType:
-					try:
-						tmp = config.getboolean("default", setting)
-					except ValueError:
-						print >>sys.stderr, "Unable to get a boolean value for '%s' in the default section" % setting
-						return False
-				elif type(tmp) == types.IntType:
-					try:
-						tmp = config.getint("default", setting)
-					except ValueError:
-						print >>sys.stderr, "Unable to get an integer value for '%s' in the default section" % setting
-						return False
+				tmp = get_setting(config, "default", setting, defaults.get(setting))
+
+				if tmp is None:
+					return False
 	
 				defaults[setting] = tmp
 			else:
-				return (False, "Unknown setting '%s'" % setting)
+				print >>sys.stderr, "Unknown setting '%s' in the default section" % setting
+				return False
 
-	for group in [i for i in config.sections() if i != "default"]:
+	for group in [i for i in config.sections() if i not in ("snappy", "default")]:
 		settings = copy.deepcopy(defaults)
 		settings["source"] = None
 
 		for setting in settings:
 			if config.has_option(group, setting):
-				tmp = settings.get(setting)
-				if type(tmp) in (types.StringType, types.NoneType):
-					try:
-						tmp = config.get(group, setting)
-					except ValueError:
-						print >>sys.stderr, "Unable to get the value for '%s' in the '%s' group" % (setting, group)
-						return False
-				elif type(tmp) == types.BooleanType:
-					try:
-						tmp = config.getboolean(group, setting)
-					except ValueError:
-						print >>sys.stderr, "Unable to get a boolean value for '%s' in the '%s' group" % (setting, group)
-						return False
-				elif type(tmp) == types.IntType:
-					try:
-						tmp = config.getint(group, setting)
-					except ValueError:
-						print >>sys.stderr, "Unable to get an integer value for '%s' in the '%s' group" % (setting, group)
-						return False
+				tmp = get_setting(config, group, setting, settings.get(setting))
+
+				if tmp is None:
+					return False
 
 				settings[setting] = tmp
 
@@ -303,8 +342,18 @@ if __name__ == "__main__":
 		print >>sys.stderr, "No configuration file or directory was found"
 		sys.exit(1)
 
+	preprocess_configs(opts.config)
+
 	for config in opts.config:
 		putlog("Processing", config, "...", level=2)
 		process_config(config, args[0])
+
+	lockfile = snappy_defaults["lockfile"]
+	if lockfile is not None:
+		try:
+			os.unlink(lockfile)
+		except Exception, e:
+			print >>sys.stderr, e
+			sys.exit(1)
 
 # vim: filetype=python noexpandtab
