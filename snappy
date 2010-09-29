@@ -231,6 +231,9 @@ def process_config(configfile, interval):
 				return False
 
 	for group in [i for i in config.sections() if i not in ("snappy", "default")]:
+		if opts.group is not None and opts.group != group:
+			continue
+
 		settings = copy.deepcopy(defaults)
 		settings["source"] = None
 
@@ -305,6 +308,7 @@ if __name__ == "__main__":
 	parser = OptionParser(usage=usage)
 	parser.add_option("-c", "--config", action="store", dest="config", default=None, help="Backup configuration file or directory")
 	parser.add_option("-d", "--defaults", action="store_true", dest="show_defaults", default=False, help="Display a list of defaults")
+	parser.add_option("-g", "--group", action="store", dest="group", default=None, help="Only process a specific group name")
 	parser.add_option("-v", "--verbose", action="count", dest="verbosity", default=0, help="Increase verbosity level")
 
 	(opts, args) = parser.parse_args()
