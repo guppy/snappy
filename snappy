@@ -18,6 +18,7 @@ intervals = ("hourly", "daily", "weekly", "monthly")
 
 global_defaults = {
 	"root": None,
+	"mirror": None,
 	"exclude": "",
 	"rsync_cmd": "rsync",
 	"rsync_args": "-qaHx --delete-during --numeric-ids",
@@ -79,18 +80,12 @@ def rotate_snapshots(location, interval, numcopies):
 	shutil.move(os.path.join(location, ".%s.0" % interval), dst)
 	os.utime(dst, None)
 
-def take_backup(settings, source, destination, interval):
-	putlog("Starting a backup of", source, "...", level=1)
-	root = settings["root"]
-	rsync_args = [settings["rsync_args"],]
-
-	destination = os.path.join(root, destination)
-
+def clone_backup(settings, source, destination):
 	if not os.path.exists(destination):
 		try:
 			os.makedirs(destination)
 		except Exception, e:
-			print >>sys.stderr, "Unable to create backup directory:", e
+			print >>sys.stderr, "Unable to create mirror directory:", e
 			return False
 		else:
 			putlog("Created", destination, level=2)
@@ -99,7 +94,64 @@ def take_backup(settings, source, destination, interval):
 		print >>sys.stderr, "cannot create directory %s: File exists" % destination
 		return False
 
-	last_snapshot = find_snapshot(destination)
+	for interval in ("hourly", "daily", "weekly", "monthly"):
+		snapshots = {}
+		for i in glob.glob(os.path.join(source, "%s.*" % interval)):
+			basename = os.path.basename(i)
+
+			if basename in snapshots:
+				continue
+
+			mtime = os.path.getmtime(i)
+			snapshots[mtime] = basename
+
+		moves_needed = True
+		while moves_needed:
+			moves_needed = False
+			for i in glob.glob(os.path.join(destination, "%s.*" % interval)):
+				mtime = os.path.getmtime(i)
+
+				if mtime in snapshots:
+					snapshot = snapshots[mtime]
+					basename = os.path.basename(i)
+					if snapshot == basename:
+						continue
+
+					new_snapshot = os.path.join(os.path.dirname(i), snapshot)
+
+					if os.path.exists(new_snapshot):
+						shutil.move(new_snapshot, new_snapshot + ".tmp")
+						shutil.move(i, new_snapshot)
+						shutil.move(new_snapshot + ".tmp", i)
+					else:
+						shutil.move(i, new_snapshot)
+
+					moves_needed = True
+
+	putlog("Running: %s %s %s/. %s/"  % (settings["rsync_cmd"], settings["rsync_args"], source, destination), level=2)
+	os.system("%s %s %s/. %s/" % (settings["rsync_cmd"], settings["rsync_args"], source, destination))
+
+def take_backup(settings, source, destination, interval):
+	putlog("Starting a backup of", source, "...", level=1)
+	root = settings["root"]
+	rsync_args = [settings["rsync_args"],]
+
+	dest = os.path.join(root, destination)
+
+	if not os.path.exists(dest):
+		try:
+			os.makedirs(dest)
+		except Exception, e:
+			print >>sys.stderr, "Unable to create backup directory:", e
+			return False
+		else:
+			putlog("Created", dest, level=2)
+
+	if not os.path.isdir(dest):
+		print >>sys.stderr, "cannot create directory %s: File exists" % dest
+		return False
+
+	last_snapshot = find_snapshot(dest)
 
 	if last_snapshot is not None:
 		putlog("Found last snapshot @", last_snapshot, level=2) 
@@ -108,14 +160,14 @@ def take_backup(settings, source, destination, interval):
 	if settings["exclude"] is not None:
 		rsync_args.append("--exclude=\"" + "\" --exclude=\"".join([x.strip() for x in settings["exclude"].split(",")]) + "\"")
 
-	tmp_snapshot = os.path.join(destination, ".%s.0" % interval)
+	tmp_snapshot = os.path.join(dest, ".%s.0" % interval)
 
 	if os.path.exists(tmp_snapshot):
 		print >>sys.stderr, "cannot create backup %s: File exists" % tmp_snapshot
 		return False
 
-	putlog("Running: %s %s %s/. %s"  % (settings["rsync_cmd"], " ".join(rsync_args), source, tmp_snapshot), level=2)
-	ret = os.system("%s %s %s/. %s" % (settings["rsync_cmd"], " ".join(rsync_args), source, tmp_snapshot))
+	putlog("Running: %s %s %s/. %s/"  % (settings["rsync_cmd"], " ".join(rsync_args), source, tmp_snapshot), level=2)
+	ret = os.system("%s %s %s/. %s/" % (settings["rsync_cmd"], " ".join(rsync_args), source, tmp_snapshot))
 
 	if os.WIFEXITED(ret):
 		exitcode = os.WEXITSTATUS(ret)
@@ -128,7 +180,7 @@ def take_backup(settings, source, destination, interval):
 
 	if exitcode in rsync_allowed_exitcodes:
 		putlog("Rotating previous snapshots ...", level=2)
-		rotate_snapshots(destination, interval, settings[interval])
+		rotate_snapshots(dest, interval, settings[interval])
 	else:
 		print >>sys.stderr, "cannot finish backup %s: rsync executed with exit code %d" % (tmp_snapshot, exitcode)
 	
@@ -136,6 +188,10 @@ def take_backup(settings, source, destination, interval):
 			shutil.rmtree(tmp_snapshot)
 
 		return False
+
+	if settings["mirror"] is not None:
+		putlog("Copying %s to %s ..." % (dest, settings["mirror"]), level=1)
+		clone_backup(settings, dest, os.path.join(settings["mirror"], destination))
 
 	return True
 
@@ -232,6 +288,7 @@ def process_config(configfile, interval):
 
 	for group in [i for i in config.sections() if i not in ("snappy", "default")]:
 		if opts.group is not None and opts.group != group:
+			putlog("Skipping group '%s' because it doesn't match '%s'!" % (group, opts.group))
 			continue
 
 		settings = copy.deepcopy(defaults)
@@ -262,6 +319,19 @@ def process_config(configfile, interval):
 			print >>sys.stderr, "cannot access %s: No such file or directory" % root
 			return False
 
+		if settings["mirror"] is not None:
+			mirror = os.path.realpath(settings["mirror"])
+
+			if mirror == root:
+				print >>sys.stderr, "The mirror and root directories cannot be the same"
+				return False
+
+			if not os.path.isdir(mirror):
+				print >>sys.stderr, "cannot access %s: No such file or directory" % root
+				return False
+		else:
+			mirror = None
+
 		if config.has_option(group, "source"):
 			source = config.get(group, "source")
 
@@ -276,10 +346,24 @@ def process_config(configfile, interval):
 						return False
 					else:
 						putlog("Created", root, level=2)
+
+			if mirror is not None and mirror == defaults["mirror"]:
+				mirror = os.path.join(mirror, group)
+
+				if not os.path.exists(mirror):
+					try:
+						os.makedirs(mirror)
+					except Exception, e:
+						print >>sys.stderr, "Unable to create backup directory:", e
+						return False
+					else:
+						putlog("Created", mirror, level=2)
+
 		else:
 			source = None
 
 		settings["root"] = root
+		settings["mirror"] = mirror
 
 		for setting, value in config.items(group):
 			if setting in settings or setting == "skip":
@@ -307,8 +391,8 @@ if __name__ == "__main__":
 
 	parser = OptionParser(usage=usage)
 	parser.add_option("-c", "--config", action="store", dest="config", default=None, help="Backup configuration file or directory")
+	parser.add_option("-g", "--group", action="store", dest="group", default=None, help="Only run the backups contained within this group")
 	parser.add_option("-d", "--defaults", action="store_true", dest="show_defaults", default=False, help="Display a list of defaults")
-	parser.add_option("-g", "--group", action="store", dest="group", default=None, help="Only process a specific group name")
 	parser.add_option("-v", "--verbose", action="count", dest="verbosity", default=0, help="Increase verbosity level")
 
 	(opts, args) = parser.parse_args()
