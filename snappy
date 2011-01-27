@@ -10,6 +10,7 @@ import glob
 import os
 import os.path
 import shutil
+import subprocess
 import sys
 import types
 import ConfigParser
@@ -19,6 +20,7 @@ intervals = ("hourly", "daily", "weekly", "monthly")
 global_defaults = {
 	"root": None,
 	"mirror": None,
+	"mirror_remote": None,
 	"exclude": "",
 	"rsync_cmd": "rsync",
 	"rsync_args": "-qaHx --delete-during --numeric-ids",
@@ -37,7 +39,7 @@ snappy_defaults = {
 # 24 = Partial transfer due to vanished source files
 # 25 = The --max-delete limit stopped deletions
 # Anything else is considered a failure and the backup will be deleted
-rsync_allowed_exitcodes = (0, 24, 25)
+rsync_allowed_exitcodes = (0, 23, 24, 25)
 
 def putlog(*args, **kargs):
 	level = kargs.get("level", 0)
@@ -79,6 +81,70 @@ def rotate_snapshots(location, interval, numcopies):
 	dst = os.path.join(location, "%s.0" % interval)
 	shutil.move(os.path.join(location, ".%s.0" % interval), dst)
 	os.utime(dst, None)
+
+def ssh(host, command):
+	p = subprocess.Popen("/usr/bin/ssh -o CheckHostIP=no -o StrictHostKeyChecking=no %s \"%s\"" % (host, command), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+	stdout, stderr = p.communicate()
+	return {"exitcode": p.returncode, "stdout": stdout.strip(), "stderr": stderr.strip()}
+
+def clone_backup_remotely(settings, source, destination):
+	ssh_details, remote_path = destination.split(":", 1)
+
+	ret = ssh(ssh_details, "mkdir -p %s" % remote_path)
+
+	if ret["exitcode"] != 0:
+		print >>sys.stderr, ret["stderr"]
+		return False
+
+	for interval in ("daily", "weekly", "monthly"):
+		snapshots = {}
+		for i in glob.glob(os.path.join(source, "%s.*" % interval)):
+			basename = os.path.basename(i)
+
+			if basename in snapshots:
+				continue
+
+			mtime = os.path.getmtime(i)
+			snapshots[mtime] = basename
+
+		did_moves = True
+		while did_moves:
+			did_moves = False
+
+			ret = ssh(ssh_details, "python -c \\\"import glob; import os; print [(i, os.path.getmtime(i)) for i in glob.glob('%s')]\\\"" % os.path.join(remote_path, "%s.*" % interval))
+
+			if ret["exitcode"] != 0:
+				print >>sys.stderr, ret["stderr"]
+				return False
+
+			for (i, mtime) in eval(ret["stdout"]):
+				if mtime in snapshots:
+					snapshot = snapshots[mtime]
+					basename = os.path.basename(i)
+
+					if snapshot == basename:
+						continue
+
+					new_snapshot = os.path.join(os.path.dirname(i), snapshot)
+					tmp_snapshot = new_snapshot + ".tmp"
+
+					ret = ssh(ssh_details, "test -e \\\"%s\\\"" % new_snapshot)
+
+					if ret["exitcode"] == 1:
+						ssh(ssh_details, "mv \\\"%s\\\" \\\"%s\\\"" % (i, new_snapshot))
+					elif ret["exitcode"] == 0:
+						ssh(ssh_details, "mv \\\"%s\\\" \\\"%s\\\" && mv \\\"%s\\\" \\\"%s\\\" && mv \\\"%s\\\" \\\"%s\\\"" % (new_snapshot, tmp_snapshot, i, new_snapshot, tmp_snapshot, i))
+					else:
+						print >>sys.stderr, ret["stderr"]
+						return False
+
+
+					did_moves = True
+					break
+
+	putlog("Running: %s %s %s/. %s/"  % (settings["rsync_cmd"], settings["rsync_args"], source, destination), level=2)
+	os.system("%s %s %s/. %s/" % (settings["rsync_cmd"], settings["rsync_args"], source, destination))
 
 def clone_backup(settings, source, destination):
 	if not os.path.exists(destination):
@@ -127,6 +193,7 @@ def clone_backup(settings, source, destination):
 						shutil.move(i, new_snapshot)
 
 					moves_needed = True
+					break
 
 	putlog("Running: %s %s %s/. %s/"  % (settings["rsync_cmd"], settings["rsync_args"], source, destination), level=2)
 	os.system("%s %s %s/. %s/" % (settings["rsync_cmd"], settings["rsync_args"], source, destination))
@@ -186,12 +253,16 @@ def take_backup(settings, source, destination, interval):
 	
 		if os.path.exists(tmp_snapshot):
 			shutil.rmtree(tmp_snapshot)
-
+	
 		return False
 
 	if settings["mirror"] is not None:
 		putlog("Copying %s to %s ..." % (dest, settings["mirror"]), level=1)
 		clone_backup(settings, dest, os.path.join(settings["mirror"], destination))
+
+	if settings["mirror_remote"] is not None:
+		putlog("Copying %s to %s ..." % (dest, settings["mirror_remote"]), level=1)
+		clone_backup_remotely(settings, dest, settings["mirror_remote"] + "/" + destination)
 
 	return True
 
@@ -288,7 +359,6 @@ def process_config(configfile, interval):
 
 	for group in [i for i in config.sections() if i not in ("snappy", "default")]:
 		if opts.group is not None and opts.group != group:
-			putlog("Skipping group '%s' because it doesn't match '%s'!" % (group, opts.group))
 			continue
 
 		settings = copy.deepcopy(defaults)
@@ -313,14 +383,12 @@ def process_config(configfile, interval):
 			print >>sys.stderr, "The 'root' option in '%s' must be set" % group
 			return False
 
-		root = os.path.realpath(root)
-
 		if not os.path.isdir(root):
 			print >>sys.stderr, "cannot access %s: No such file or directory" % root
 			return False
 
 		if settings["mirror"] is not None:
-			mirror = os.path.realpath(settings["mirror"])
+			mirror = settings["mirror"]
 
 			if mirror == root:
 				print >>sys.stderr, "The mirror and root directories cannot be the same"
@@ -331,6 +399,23 @@ def process_config(configfile, interval):
 				return False
 		else:
 			mirror = None
+
+		if settings["mirror_remote"] is not None:
+			mirror_remote = settings["mirror_remote"]
+			ssh_details, remote_path = mirror_remote.split(":", 1)
+
+			ret = ssh(ssh_details, "test -d \\\"%s\\\"" % remote_path)
+
+			if ret["exitcode"] == 0:
+				pass
+			elif ret["exitcode"] == 1:
+				print >>sys.stderr, "cannot remotely access %s: No such file or directory" % root
+				return False
+			else:
+				print >>sys.stderr, ret["stderr"]
+				return False
+		else:
+			mirror_remote = None
 
 		if config.has_option(group, "source"):
 			source = config.get(group, "source")
@@ -346,6 +431,9 @@ def process_config(configfile, interval):
 						return False
 					else:
 						putlog("Created", root, level=2)
+
+			if mirror_remote is not None and mirror_remote == defaults["mirror_remote"]:
+				mirror_remote = mirror_remote + "/" + group
 
 			if mirror is not None and mirror == defaults["mirror"]:
 				mirror = os.path.join(mirror, group)
@@ -364,6 +452,7 @@ def process_config(configfile, interval):
 
 		settings["root"] = root
 		settings["mirror"] = mirror
+		settings["mirror_remote"] = mirror_remote
 
 		for setting, value in config.items(group):
 			if setting in settings or setting == "skip":
@@ -413,7 +502,7 @@ if __name__ == "__main__":
 	if opts.config is None:
 		for f, t in (('snappy.conf', 'file'), ('snappy.d', 'dir')):
 			for x in ("", "~/.", "/etc/"):
-				tmp = os.path.realpath("%s%s" % (f, x))
+				tmp = "%s%s" % (f, x)
 				if t == "file" and os.path.isfile(tmp):
 					opts.config = (tmp,)
 					break
@@ -422,7 +511,7 @@ if __name__ == "__main__":
 					opts.config = glob.glob(os.path.join(tmp, "*.conf"))
 					break
 	elif os.path.isdir(opts.config):
-		opts.config = glob.glob(os.path.join(os.path.realpath(opts.config), "*.conf"))
+		opts.config = glob.glob(os.path.join(opts.config, "*.conf"))
 	else:
 		opts.config = (opts.config,)
 
