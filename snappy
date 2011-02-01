@@ -83,7 +83,7 @@ def rotate_snapshots(location, interval, numcopies):
 	os.utime(dst, None)
 
 def ssh(host, command):
-	p = subprocess.Popen("/usr/bin/ssh -o CheckHostIP=no -o StrictHostKeyChecking=no %s \"%s\"" % (host, command), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+	p = subprocess.Popen("/usr/bin/ssh -o PasswordAuthentication=no %s \"%s\"" % (host, command), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 	stdout, stderr = p.communicate()
 	return {"exitcode": p.returncode, "stdout": stdout.strip(), "stderr": stderr.strip()}
