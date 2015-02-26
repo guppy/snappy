@@ -5,6 +5,7 @@ __author__ = "Jeff Fisher <guppy@techmonkeys.org>"
 __copyright__ = "Copyright 2010 Jeff Fisher"
 __license__ = "GPL v2"
 
+import atexit
 import copy
 import glob
 import os
@@ -35,6 +36,21 @@ snappy_defaults = {
 	"lockfile": None,
 }
 
+skip_atexit = False
+
+@atexit.register
+def cleanup():
+	if skip_atexit:
+		return
+	
+	lockfile = snappy_defaults["lockfile"]
+	if lockfile is not None:
+		try:
+			os.unlink(lockfile)
+		except Exception, e:
+			print >>sys.stderr, e
+			sys.exit(1)
+		
 # 0 = Success
 # 24 = Partial transfer due to vanished source files
 # 25 = The --max-delete limit stopped deletions
@@ -51,11 +67,16 @@ def putlog(*args, **kargs):
 	if level <= verbosity:
 		print " ".join(args)
 
-def find_snapshot(location):
+def find_snapshot(location, type=None):
 	recent_snapshot = None
 	recent_unixtime = 0
 
-	for interval in intervals:
+	if type is None:
+		tocheck = intervals
+	else:
+		tocheck = (type,)
+
+	for interval in tocheck:
 		for snapshot in glob.glob(os.path.join(location, "%s.*" % interval)):
 			mtime = os.path.getmtime(snapshot)
 			if mtime > recent_unixtime:
@@ -83,7 +104,7 @@ def rotate_snapshots(location, interval, numcopies):
 	os.utime(dst, None)
 
 def ssh(host, command):
-	p = subprocess.Popen("/usr/bin/ssh -o PasswordAuthentication=no %s \"%s\"" % (host, command), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+	p = subprocess.Popen("/usr/bin/ssh -o PasswordAuthentication=no -o CheckHostIP=no -o StrictHostKeyChecking=no %s \"%s\"" % (host, command), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 	stdout, stderr = p.communicate()
 	return {"exitcode": p.returncode, "stdout": stdout.strip(), "stderr": stderr.strip()}
@@ -230,8 +251,11 @@ def take_backup(settings, source, destination, interval):
 	tmp_snapshot = os.path.join(dest, ".%s.0" % interval)
 
 	if os.path.exists(tmp_snapshot):
-		print >>sys.stderr, "cannot create backup %s: File exists" % tmp_snapshot
-		return False
+		shutil.rmtree(tmp_snapshot)
+
+		if os.path.exists(tmp_snapshot):
+			print >>sys.stderr, "cannot create backup %s: File exists" % tmp_snapshot
+			return False
 
 	putlog("Running: %s %s %s/. %s/"  % (settings["rsync_cmd"], " ".join(rsync_args), source, tmp_snapshot), level=2)
 	ret = os.system("%s %s %s/. %s/" % (settings["rsync_cmd"], " ".join(rsync_args), source, tmp_snapshot))
@@ -319,8 +343,10 @@ def preprocess_configs(configs):
 					sys.exit(1)
 
 	lockfile = snappy_defaults["lockfile"]
+
 	if lockfile is not None:
 		if os.path.exists(lockfile):
+			skip_atexit = True
 			putlog(lockfile, "already exists, exiting", level=1)
 			sys.exit(0)
 
@@ -374,7 +400,7 @@ def process_config(configfile, interval):
 				settings[setting] = tmp
 
 		if settings[interval] <= 0 or interval in [i.strip() for i in settings["skip"].split(",")]:
-			putlog("Skipping group '%s' because this is a %s backup!" % (group, interval), level=1)
+			putlog("Skipping group '%s' because this is a %s backup!" % (group, interval), level=3)
 			continue
 
 		root = settings["root"]
@@ -524,13 +550,5 @@ if __name__ == "__main__":
 	for config in opts.config:
 		putlog("Processing", config, "...", level=2)
 		process_config(config, args[0])
-
-	lockfile = snappy_defaults["lockfile"]
-	if lockfile is not None:
-		try:
-			os.unlink(lockfile)
-		except Exception, e:
-			print >>sys.stderr, e
-			sys.exit(1)
 
 # vim: filetype=python noexpandtab
