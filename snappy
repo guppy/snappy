@@ -40,6 +40,8 @@ skip_atexit = False
 
 @atexit.register
 def cleanup():
+	global skip_atexit
+
 	if skip_atexit:
 		return
 	
@@ -315,7 +317,7 @@ def get_setting(config, group, key, default):
 	return tmp
 
 def preprocess_configs(configs):
-	global snappy_defaults
+	global snappy_defaults, skip_atexit
 
 	for configfile in configs:
 		if not os.path.isfile(configfile):
