@@ -1,8 +1,8 @@
 #!/bin/sh
 """"exec ${PYTHON:-python} -t $0 "$@";" """
 
-__author__ = "Jeff Fisher <guppy@techmonkeys.org>"
-__copyright__ = "Copyright 2010 Jeff Fisher"
+__author__ = "Jeff Fisher <jeff@zaf.ca>"
+__copyright__ = "Copyright 2015 Jeff Fisher"
 __license__ = "GPL v2"
 
 import atexit
